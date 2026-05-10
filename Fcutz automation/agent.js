@@ -109,7 +109,7 @@ async function handleMessage(senderId, userText) {
 
   // 2. Appeler Claude avec l'historique complet
   let response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     tools,
@@ -151,7 +151,7 @@ async function handleMessage(senderId, userText) {
     history.push({ role: 'user', content: toolResults });
 
     response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       tools,
