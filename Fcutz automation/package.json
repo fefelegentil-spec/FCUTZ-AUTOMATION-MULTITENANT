@@ -1,0 +1,16 @@
+{
+  "name": "barberbot",
+  "version": "1.0.0",
+  "description": "Agent IA Instagram pour gestion des RDV coiffure",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0"
+  }
+}
