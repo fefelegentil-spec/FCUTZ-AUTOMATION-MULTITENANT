@@ -5,41 +5,41 @@ const { getAvailableSlots, createBooking, cancelBooking } = require('./booking')
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// 🧠 Personnalité et règles de l'agent
-// Modifiez ce prompt pour adapter le nom du salon, les prestations et les horaires
 const SYSTEM_PROMPT = `
-Tu es l'assistant virtuel d'un salon de coiffure. Tu réponds aux messages Instagram des clients.
-Tu es chaleureux, professionnel et concis (max 3 phrases par message). Tu réponds toujours en français.
+Tu es l'assistant virtuel de FCUTZ, un salon de coiffure. Tu réponds aux messages Instagram des clients.
+Tu es chaleureux, décontracté mais professionnel. Tu réponds toujours en français, de manière concise (max 3 phrases).
+Tu comprends les messages écrits de manière informelle ("frérot dispo demain 18h", "jsuis chaud pour une coupe", etc.)
 
-Prestations disponibles :
-- Coupe femme (45 min) 
-- Coupe homme (30 min)
-- Brushing (30 min)
-- Barbe (20 min)
-- Coloration (90 min)
-- Mèches (120 min)
+Prestations disponibles UNIQUEMENT via message privé :
+- Coupe Simple via DM (30 min) → 20€
+- Transformation via DM (45 min) → 25€
+- Coupe Premium via DM (60 min) → 35€
 
-Horaires d'ouverture : Mardi au Samedi, 9h à 19h. Fermé dimanche et lundi.
+Ces prestations sont exclusives aux DMs (pas disponibles sur le site).
 
 Processus pour un RDV :
-1. Si la prestation n'est pas précisée, demande laquelle
-2. Demande la date souhaitée
-3. Utilise l'outil get_slots pour vérifier les disponibilités
+1. Si la prestation n'est pas précisée, demande laquelle parmi les 3
+2. Demande la date souhaitée (si pas précisée)
+3. Utilise get_slots pour vérifier les dispos
 4. Propose 2-3 créneaux disponibles
-5. Quand le client choisit un créneau, demande son prénom
-6. Confirme le récapitulatif (prénom, prestation, date, heure)
-7. Sur confirmation explicite ("oui", "ok", "parfait"...), utilise create_booking
+5. Quand le client choisit, demande son prénom
+6. Récapitule : prénom, prestation, date, heure, prix
+7. Sur confirmation explicite ("oui", "ok", "c'est bon", "parfait", "go"...), utilise create_booking
+8. Confirme la réservation avec un message sympa
 
 Pour une annulation :
 1. Demande le prénom et la date du RDV
 2. Confirme avant d'annuler
-3. Utilise cancel_booking
+3. Utilise cancel_booking avec l'ID
 
-Ne crée JAMAIS un RDV sans confirmation explicite du client.
-Si tu ne sais pas répondre à une question, dis que le salon sera contacté.
+Règles importantes :
+- Ne JAMAIS créer un RDV sans confirmation explicite
+- Si le jour demandé est fermé, propose le prochain jour ouvert
+- Si plus de créneaux dispo ce jour-là, propose un autre jour
+- Si tu ne sais pas répondre, dis que tu vas transmettre au patron
+- Rappelle toujours que ces tarifs sont +5€ vs le site car c'est une réservation exclusive via DM
 `;
 
-// 🔧 Outils que Claude peut utiliser pour interagir avec votre système
 const tools = [
   {
     name: 'get_slots',
@@ -49,15 +49,15 @@ const tools = [
       properties: {
         date: {
           type: 'string',
-          description: 'Date au format YYYY-MM-DD, ex: 2025-06-14'
+          description: 'Date au format YYYY-MM-DD, ex: 2026-05-20',
         },
         service: {
           type: 'string',
-          description: 'Nom exact de la prestation, ex: Coupe femme'
-        }
+          description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"',
+        },
       },
-      required: ['date', 'service']
-    }
+      required: ['date', 'service'],
+    },
   },
   {
     name: 'create_booking',
@@ -67,23 +67,23 @@ const tools = [
       properties: {
         name: {
           type: 'string',
-          description: 'Prénom du client'
+          description: 'Prénom (et nom si donné) du client',
         },
         service: {
           type: 'string',
-          description: 'Nom de la prestation'
+          description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"',
         },
         date: {
           type: 'string',
-          description: 'Date au format YYYY-MM-DD'
+          description: 'Date au format YYYY-MM-DD',
         },
         time: {
           type: 'string',
-          description: 'Heure au format HH:MM, ex: 14:30'
-        }
+          description: 'Heure au format HH:MM, ex: 14:30',
+        },
       },
-      required: ['name', 'service', 'date', 'time']
-    }
+      required: ['name', 'service', 'date', 'time'],
+    },
   },
   {
     name: 'cancel_booking',
@@ -93,30 +93,28 @@ const tools = [
       properties: {
         booking_id: {
           type: 'string',
-          description: "L'identifiant unique du rendez-vous"
-        }
+          description: "L'identifiant unique du rendez-vous (ex: a_mp5f38cv)",
+        },
       },
-      required: ['booking_id']
-    }
-  }
+      required: ['booking_id'],
+    },
+  },
 ];
 
-// 🚀 Fonction principale : reçoit un message et envoie une réponse
 async function handleMessage(senderId, userText) {
-  // 1. Ajouter le message du client à l'historique
+  if (!userText) return;
+
   addMessage(senderId, 'user', userText);
   const history = getHistory(senderId);
 
-  // 2. Appeler Claude avec l'historique complet
   let response = await client.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     tools,
-    messages: history
+    messages: history,
   });
 
-  // 3. Boucle : Claude peut utiliser plusieurs outils à la suite
   while (response.stop_reason === 'tool_use') {
     const toolUses = response.content.filter(b => b.type === 'tool_use');
     const toolResults = [];
@@ -131,7 +129,7 @@ async function handleMessage(senderId, userText) {
       } else if (toolUse.name === 'create_booking') {
         const booking = await createBooking({
           ...toolUse.input,
-          instagramId: senderId
+          instagramId: senderId,
         });
         result = JSON.stringify(booking);
       } else if (toolUse.name === 'cancel_booking') {
@@ -142,11 +140,10 @@ async function handleMessage(senderId, userText) {
       toolResults.push({
         type: 'tool_result',
         tool_use_id: toolUse.id,
-        content: result
+        content: result,
       });
     }
 
-    // Donner les résultats à Claude et le laisser continuer
     history.push({ role: 'assistant', content: response.content });
     history.push({ role: 'user', content: toolResults });
 
@@ -155,19 +152,19 @@ async function handleMessage(senderId, userText) {
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       tools,
-      messages: history
+      messages: history,
     });
   }
 
-  // 4. Extraire la réponse texte finale
   const finalText = response.content
     .filter(b => b.type === 'text')
     .map(b => b.text)
     .join('');
 
-  // 5. Sauvegarder la réponse et l'envoyer sur Instagram
   addMessage(senderId, 'assistant', finalText);
   await sendMessage(senderId, finalText);
+
+  console.log(`💬 Réponse envoyée à ${senderId}:`, finalText);
 }
 
 module.exports = { handleMessage };
