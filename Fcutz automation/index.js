@@ -7,25 +7,25 @@ app.use(express.json());
 const { handleMessage } = require("./agent");
 
 // ========================
-// 🔐 VERIFY WEBHOOK META
+// 🔐 WEBHOOK VERIFY (DEBUG VERSION)
 // ========================
 app.get("/webhook/instagram", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
+  console.log("🔐 VERIFY WEBHOOK HIT");
+  console.log("QUERY:", req.query);
+
   const challenge = req.query["hub.challenge"];
 
-  console.log("🔐 Webhook verification request");
-
-  if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
-    console.log("✅ Webhook vérifié");
+  if (challenge) {
+    console.log("✅ Returning challenge:", challenge);
     return res.status(200).send(challenge);
   }
 
-  return res.sendStatus(403);
+  console.log("❌ No challenge received");
+  return res.sendStatus(400);
 });
 
 // ========================
-// 📩 INSTAGRAM WEBHOOK (DEBUG VERSION)
+// 📩 INSTAGRAM WEBHOOK
 // ========================
 app.post("/webhook/instagram", async (req, res) => {
   console.log("🚨 WEBHOOK HIT RAW");
@@ -34,7 +34,6 @@ app.post("/webhook/instagram", async (req, res) => {
   try {
     const body = req.body;
 
-    // IMPORTANT: on ne filtre PLUS pour debug
     if (body.object) {
       console.log("📦 Object type:", body.object);
 
@@ -44,12 +43,11 @@ app.post("/webhook/instagram", async (req, res) => {
         for (const event of entry.messaging || []) {
           console.log("📨 EVENT:", JSON.stringify(event, null, 2));
 
-          // on ne bloque plus sur is_echo pour debug
-          if (event.sender && event.message) {
+          if (event.sender && event.message && !event.message.is_echo) {
             const senderId = event.sender.id;
             const text = event.message.text;
 
-            console.log("📩 MESSAGE DETECTED:");
+            console.log("📩 MESSAGE DETECTED");
             console.log("senderId:", senderId);
             console.log("text:", text);
 
@@ -95,6 +93,8 @@ app.post("/test-webhook", async (req, res) => {
 // ❤️ HEALTH CHECK
 // ========================
 app.get("/health", (req, res) => {
+  console.log("❤️ HEALTH CHECK HIT");
+
   res.json({
     status: "ok",
     bot: "FCUTZ",
