@@ -7,20 +7,23 @@ app.use(express.json());
 const { handleMessage } = require("./agent");
 
 // ========================
-// 🔐 WEBHOOK VERIFY (DEBUG VERSION)
+// 🔐 WEBHOOK VERIFY META (FIXED)
 // ========================
 app.get("/webhook/instagram", (req, res) => {
   console.log("🔐 VERIFY WEBHOOK HIT");
   console.log("QUERY:", req.query);
 
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (challenge) {
-    console.log("✅ Returning challenge:", challenge);
+  // Vérification officielle Meta
+  if (mode === "subscribe" && challenge) {
+    console.log("✅ VERIFY OK - returning challenge");
     return res.status(200).send(challenge);
   }
 
-  console.log("❌ No challenge received");
+  console.log("❌ VERIFY FAILED");
   return res.sendStatus(400);
 });
 
@@ -29,13 +32,13 @@ app.get("/webhook/instagram", (req, res) => {
 // ========================
 app.post("/webhook/instagram", async (req, res) => {
   console.log("🚨 WEBHOOK HIT RAW");
-  console.log("BODY:", JSON.stringify(req.body, null, 2));
+  console.log(JSON.stringify(req.body, null, 2));
 
   try {
     const body = req.body;
 
     if (body.object) {
-      console.log("📦 Object type:", body.object);
+      console.log("📦 OBJECT:", body.object);
 
       for (const entry of body.entry || []) {
         console.log("📥 ENTRY:", JSON.stringify(entry, null, 2));
@@ -47,7 +50,7 @@ app.post("/webhook/instagram", async (req, res) => {
             const senderId = event.sender.id;
             const text = event.message.text;
 
-            console.log("📩 MESSAGE DETECTED");
+            console.log("📩 MESSAGE RECEIVED");
             console.log("senderId:", senderId);
             console.log("text:", text);
 
@@ -68,7 +71,7 @@ app.post("/webhook/instagram", async (req, res) => {
 });
 
 // ========================
-// 🧪 TEST WEBHOOK
+// 🧪 TEST ENDPOINT
 // ========================
 app.post("/test-webhook", async (req, res) => {
   console.log("🧪 TEST WEBHOOK");
@@ -102,7 +105,7 @@ app.get("/health", (req, res) => {
 });
 
 // ========================
-// 🚀 START SERVER
+// 🚀 SERVER START
 // ========================
 const PORT = process.env.PORT || 3000;
 
