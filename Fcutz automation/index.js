@@ -4,7 +4,6 @@ const app = express();
 
 app.use(express.json());
 
-// Import agent IA (si cassé, on le verra tout de suite)
 const { handleMessage } = require('./agent');
 
 // ========================
@@ -29,12 +28,12 @@ app.get('/webhook/instagram', (req, res) => {
 // 📩 INSTAGRAM WEBHOOK
 // ========================
 app.post('/webhook/instagram', async (req, res) => {
-  console.log("🔥 WEBHOOK HIT");
-  console.log("BODY:", JSON.stringify(req.body, null, 2));
-
-  const body = req.body;
+  console.log("🔥 INSTAGRAM WEBHOOK HIT");
+  console.log(JSON.stringify(req.body, null, 2));
 
   try {
+    const body = req.body;
+
     if (body.object === 'instagram') {
       for (const entry of body.entry || []) {
         for (const event of entry.messaging || []) {
@@ -43,40 +42,45 @@ app.post('/webhook/instagram', async (req, res) => {
             const senderId = event.sender.id;
             const text = event.message.text;
 
-            console.log(`📩 Message de ${senderId}: ${text}`);
-            console.log("➡️ CALLING AI (handleMessage)");
+            console.log(`📩 IG Message de ${senderId}: ${text}`);
+            console.log("➡️ CALLING AI");
 
-            // Appel IA
-            await handleMessage(senderId, text);
-
+            await handleMessage(senderId, text, {
+              accessToken: process.env.META_ACCESS_TOKEN,
+              instagramAccountId: process.env.INSTAGRAM_ACCOUNT_ID
+            });
           }
         }
       }
     }
+
   } catch (err) {
-    console.error("❌ ERROR WEBHOOK:", err);
+    console.error("❌ WEBHOOK ERROR:", err);
   }
 
-  // Toujours répondre vite à Meta
   res.sendStatus(200);
 });
 
 // ========================
-// 🧪 TEST WEBHOOK (POSTMAN)
+// 🧪 TEST WEBHOOK
 // ========================
 app.post('/test-webhook', async (req, res) => {
   console.log("🧪 TEST WEBHOOK REÇU");
-  console.log("BODY:", req.body);
+  console.log(req.body);
 
   try {
-    const senderId = req.body.sender || "test";
+    const senderId = req.body.sender || "test-user";
     const text = req.body.message || "empty";
 
-    console.log("➡️ CALLING AI (TEST MODE)");
+    console.log("➡️ CALLING AI (TEST)");
 
-    await handleMessage(senderId, text);
+    await handleMessage(senderId, text, {
+      accessToken: process.env.META_ACCESS_TOKEN,
+      instagramAccountId: process.env.INSTAGRAM_ACCOUNT_ID
+    });
 
     res.sendStatus(200);
+
   } catch (err) {
     console.error("❌ TEST ERROR:", err);
     res.sendStatus(500);
@@ -89,8 +93,7 @@ app.post('/test-webhook', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    bot: 'BarberBot',
-    time: new Date().toISOString()
+    bot: 'BarberBot'
   });
 });
 
