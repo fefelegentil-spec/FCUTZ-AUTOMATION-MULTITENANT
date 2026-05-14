@@ -21,6 +21,10 @@ app.get('/webhook/instagram', (req, res) => {
 
 // 📨 Réception des messages Instagram
 app.post('/webhook/instagram', async (req, res) => {
+
+  console.log("🔥 WEBHOOK HIT");
+  console.log("BODY:", JSON.stringify(req.body, null, 2));
+
   const body = req.body;
 
   if (body.object === 'instagram') {
