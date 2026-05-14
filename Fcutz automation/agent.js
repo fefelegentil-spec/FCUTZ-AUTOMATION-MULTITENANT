@@ -54,4 +54,133 @@ Règles importantes :
 
 const tools = [
   {
-    name: 'get_s
+    name: 'get_slots',
+    description: 'Récupère les créneaux disponibles pour une date et une prestation données',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'Date au format YYYY-MM-DD, ex: 2026-05-20' },
+        service: { type: 'string', description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"' },
+      },
+      required: ['date', 'service'],
+    },
+  },
+  {
+    name: 'find_booking',
+    description: 'Recherche un RDV existant par prénom du client et date (optionnelle). À utiliser avant toute annulation ou déplacement.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Prénom du client' },
+        date: { type: 'string', description: 'Date au format YYYY-MM-DD (optionnel)' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'create_booking',
+    description: 'Crée un rendez-vous après confirmation explicite du client',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Prénom (et nom si donné) du client' },
+        service: { type: 'string', description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"' },
+        date: { type: 'string', description: 'Date au format YYYY-MM-DD' },
+        time: { type: 'string', description: 'Heure au format HH:MM' },
+      },
+      required: ['name', 'service', 'date', 'time'],
+    },
+  },
+  {
+    name: 'reschedule_booking',
+    description: 'Déplace un RDV existant vers un nouveau créneau après confirmation explicite du client',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bookingId: { type: 'string', description: 'ID du RDV à déplacer (obtenu via find_booking)' },
+        name: { type: 'string', description: 'Prénom du client' },
+        service: { type: 'string', description: 'Nom exact de la prestation' },
+        newDate: { type: 'string', description: 'Nouvelle date au format YYYY-MM-DD' },
+        newTime: { type: 'string', description: 'Nouvelle heure au format HH:MM' },
+      },
+      required: ['bookingId', 'name', 'service', 'newDate', 'newTime'],
+    },
+  },
+  {
+    name: 'cancel_booking',
+    description: 'Annule un rendez-vous après confirmation explicite du client',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'ID du RDV (obtenu via find_booking)' },
+      },
+      required: ['booking_id'],
+    },
+  },
+];
+
+async function handleMessage(senderId, userText) {
+  if (!userText) return;
+
+  addMessage(senderId, 'user', userText);
+  const history = getHistory(senderId);
+
+  let response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 1024,
+    system: SYSTEM_PROMPT,
+    tools,
+    messages: history,
+  });
+
+  while (response.stop_reason === 'tool_use') {
+    const toolUses = response.content.filter(b => b.type === 'tool_use');
+    const toolResults = [];
+
+    for (const toolUse of toolUses) {
+      let result;
+      console.log(`🔧 Claude utilise: ${toolUse.name}`, toolUse.input);
+
+      if (toolUse.name === 'get_slots') {
+        result = await getAvailableSlots(toolUse.input.date, toolUse.input.service);
+      } else if (toolUse.name === 'find_booking') {
+        result = await findBooking({ name: toolUse.input.name, date: toolUse.input.date });
+      } else if (toolUse.name === 'create_booking') {
+        result = await createBooking({ ...toolUse.input, instagramId: senderId });
+      } else if (toolUse.name === 'reschedule_booking') {
+        result = await rescheduleBooking({ ...toolUse.input, instagramId: senderId });
+      } else if (toolUse.name === 'cancel_booking') {
+        result = await cancelBooking(toolUse.input.booking_id);
+      }
+
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: toolUse.id,
+        content: JSON.stringify(result),
+      });
+    }
+
+    history.push({ role: 'assistant', content: response.content });
+    history.push({ role: 'user', content: toolResults });
+
+    response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: SYSTEM_PROMPT,
+      tools,
+      messages: history,
+    });
+  }
+
+  const finalText = response.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('');
+
+  addMessage(senderId, 'assistant', finalText);
+  await sendMessage(senderId, finalText);
+
+  console.log(`💬 Réponse envoyée à ${senderId}:`, finalText);
+}
+
+module.exports = { handleMessage };
