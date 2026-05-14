@@ -1,27 +1,13 @@
 const axios = require('axios');
-const BASE = process.env.BOOKING_API_URL; // https://fcutz-backend-production.up.railway.app/api
+const BASE = process.env.BOOKING_API_URL;
 
-// ========================
-// 📋 PRESTATIONS VIA DM
-// ========================
 const SERVICES_VIA_DM = {
   'Coupe Simple via DM': { duration: 30, price: 20 },
   'Transformation via DM': { duration: 45, price: 25 },
-  'Coupe Premium via DM': { duration: 60, price: 35 },
+  'Coupe Premium via DM': { duration: 45, price: 25 },
 };
 
-// ========================
-// 🕐 UTILITAIRES HORAIRES
-// ========================
-const DAY_MAP = {
-  0: 'dim',
-  1: 'lun',
-  2: 'mar',
-  3: 'mer',
-  4: 'jeu',
-  5: 'ven',
-  6: 'sam',
-};
+const DAY_MAP = { 0:'dim', 1:'lun', 2:'mar', 3:'mer', 4:'jeu', 5:'ven', 6:'sam' };
 
 function timeToMinutes(time) {
   const [h, m] = time.split(':').map(Number);
@@ -34,103 +20,91 @@ function minutesToTime(minutes) {
   return `${h}:${m}`;
 }
 
-// ========================
-// 📅 CRÉNEAUX DISPONIBLES
-// ========================
 async function getAvailableSlots(date, service) {
   try {
     const serviceInfo = SERVICES_VIA_DM[service];
-    if (!serviceInfo) {
-      return { error: `Prestation inconnue: ${service}` };
-    }
+    if (!serviceInfo) return { error: `Prestation inconnue: ${service}` };
     const duration = serviceInfo.duration;
 
-    // 1. Récupérer les horaires d'ouverture
     const availRes = await axios.get(`${BASE}/availability`);
     const hours = availRes.data.hours;
     const closedDates = availRes.data.closedDates || [];
 
-    // 2. Vérifier si la date est fermée
-    if (closedDates.includes(date)) {
-      return { available: false, reason: 'Fermé ce jour-là', slots: [] };
-    }
+    if (closedDates.includes(date)) return { available: false, reason: 'Fermé ce jour-là', slots: [] };
 
-    // 3. Vérifier si le jour est ouvert
     const dayOfWeek = new Date(date).getDay();
     const dayKey = DAY_MAP[dayOfWeek];
     const dayHours = hours[dayKey];
 
-    if (!dayHours || !dayHours.open) {
-      return { available: false, reason: 'Fermé ce jour-là', slots: [] };
-    }
+    if (!dayHours || !dayHours.open) return { available: false, reason: 'Fermé ce jour-là', slots: [] };
 
     const openMinutes = timeToMinutes(dayHours.start);
     const closeMinutes = timeToMinutes(dayHours.end);
 
-    // 4. Récupérer les RDV existants ce jour-là
     const apptRes = await axios.get(`${BASE}/appointments`);
     const allAppointments = apptRes.data || [];
     const dayAppointments = allAppointments.filter(a => a.date === date && a.status !== 'cancelled');
 
-    // 5. Calculer les créneaux occupés
     const busySlots = dayAppointments.map(a => ({
       start: timeToMinutes(a.time),
       end: timeToMinutes(a.time) + (a.duration || 30),
     }));
 
-    // 6. Générer les créneaux libres (toutes les 15 min)
     const freeSlots = [];
     for (let t = openMinutes; t + duration <= closeMinutes; t += 15) {
       const slotEnd = t + duration;
       const isBusy = busySlots.some(b => t < b.end && slotEnd > b.start);
-      if (!isBusy) {
-        freeSlots.push(minutesToTime(t));
-      }
+      if (!isBusy) freeSlots.push(minutesToTime(t));
     }
 
-    return {
-      available: freeSlots.length > 0,
-      date,
-      service,
-      duration,
-      price: serviceInfo.price,
-      slots: freeSlots,
-    };
+    return { available: freeSlots.length > 0, date, service, duration, price: serviceInfo.price, slots: freeSlots };
   } catch (err) {
     console.error('❌ Erreur créneaux:', err.message);
     return { error: 'Impossible de récupérer les créneaux', slots: [] };
   }
 }
 
-// ========================
-// ✅ CRÉER UN RDV
-// ========================
+async function findBooking({ name, date }) {
+  try {
+    const apptRes = await axios.get(`${BASE}/appointments`);
+    const all = apptRes.data || [];
+    const firstNameLower = name.trim().split(' ')[0].toLowerCase();
+    const matches = all.filter(a => {
+      const sameName = a.fname?.toLowerCase() === firstNameLower ||
+                       a.name?.toLowerCase().includes(firstNameLower);
+      const sameDate = date ? a.date === date : true;
+      return sameName && sameDate && a.status !== 'cancelled';
+    });
+    if (matches.length === 0) return { found: false, message: 'Aucun RDV trouvé' };
+    return { found: true, bookings: matches.map(a => ({
+      id: a._id || a.id,
+      date: a.date,
+      time: a.time,
+      service: a.service,
+      fname: a.fname,
+    }))};
+  } catch (err) {
+    console.error('❌ Erreur recherche RDV:', err.message);
+    return { error: 'Impossible de rechercher le RDV' };
+  }
+}
+
 async function createBooking({ name, service, date, time, instagramId }) {
   try {
     const serviceInfo = SERVICES_VIA_DM[service];
-    if (!serviceInfo) {
-      return { error: `Prestation inconnue: ${service}` };
-    }
-
-    // Séparer prénom / nom (on met tout en fname si un seul mot)
+    if (!serviceInfo) return { error: `Prestation inconnue: ${service}` };
     const parts = name.trim().split(' ');
     const fname = parts[0];
     const lname = parts.slice(1).join(' ') || '';
-
     const response = await axios.post(`${BASE}/book`, {
-      fname,
-      lname,
-      phone: '',
-      email: '',
+      fname, lname,
+      phone: '', email: '',
       note: `Réservation via Instagram DM (@${instagramId})`,
-      service,
-      date,
-      time,
+      service, date, time,
       duration: serviceInfo.duration,
       price: serviceInfo.price,
       source: 'instagram',
     });
-
     return response.data;
   } catch (err) {
     console.error('❌ Erreur création RDV:', err.message);
@@ -138,9 +112,17 @@ async function createBooking({ name, service, date, time, instagramId }) {
   }
 }
 
-// ========================
-// ❌ ANNULER UN RDV
-// ========================
+async function rescheduleBooking({ bookingId, name, service, newDate, newTime, instagramId }) {
+  try {
+    await axios.delete(`${BASE}/appointments/${bookingId}`);
+    const newBooking = await createBooking({ name, service, date: newDate, time: newTime, instagramId });
+    return { success: true, newBooking };
+  } catch (err) {
+    console.error('❌ Erreur déplacement RDV:', err.message);
+    return { error: 'Impossible de déplacer le rendez-vous' };
+  }
+}
+
 async function cancelBooking(bookingId) {
   try {
     await axios.delete(`${BASE}/appointments/${bookingId}`);
@@ -151,4 +133,4 @@ async function cancelBooking(bookingId) {
   }
 }
 
-module.exports = { getAvailableSlots, createBooking, cancelBooking, SERVICES_VIA_DM };
+module.exports = { getAvailableSlots, findBooking, createBooking, rescheduleBooking, cancelBooking, SERVICES_VIA_DM };
