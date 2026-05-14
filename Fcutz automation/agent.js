@@ -1,7 +1,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { getHistory, addMessage } = require('./sessions');
 const { sendMessage } = require('./instagram');
-const { getAvailableSlots, createBooking, cancelBooking } = require('./booking');
+const { getAvailableSlots, findBooking, createBooking, rescheduleBooking, cancelBooking } = require('./booking');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -11,9 +11,11 @@ Tu es chaleureux, décontracté mais professionnel. Tu réponds toujours en fran
 Tu comprends les messages écrits de manière informelle ("frérot dispo demain 18h", "jsuis chaud pour une coupe", etc.)
 
 Prestations disponibles UNIQUEMENT via message privé :
-- Coupe Simple via DM (30 min) → 20€
-- Transformation via DM (45 min) → 25€
-- Coupe Premium via DM (60 min) → 35€
+- Coupe Simple via DM (30 min) → 20€ : coupe classique
+- Transformation via DM (45 min) → 25€ : pour les cheveux longs, remise en forme complète
+- Coupe Premium via DM (45 min) → 25€ : contours au spray, finition soignée
+
+Si le client ne sait pas quelle prestation choisir, aide-le à choisir en posant une question simple : ses cheveux sont longs ? Il veut juste les contours au propre ?
 
 Ces prestations sont exclusives aux DMs (pas disponibles sur le site).
 
@@ -29,15 +31,26 @@ Processus pour un RDV :
 
 Pour une annulation :
 1. Demande le prénom et la date du RDV
-2. Confirme avant d'annuler
-3. Utilise cancel_booking avec l'ID
+2. Utilise find_booking pour retrouver le RDV
+3. Récapitule le RDV trouvé et demande confirmation
+4. Sur confirmation, utilise cancel_booking avec l'ID trouvé
+
+Pour un déplacement de RDV :
+1. Demande le prénom et la date actuelle du RDV
+2. Utilise find_booking pour retrouver le RDV
+3. Demande la nouvelle date souhaitée
+4. Utilise get_slots pour vérifier les dispos sur la nouvelle date
+5. Propose 2-3 créneaux disponibles
+6. Récapitule l'ancien et le nouveau créneau, demande confirmation
+7. Sur confirmation explicite, utilise reschedule_booking
 
 Règles importantes :
-- Ne JAMAIS créer un RDV sans confirmation explicite
+- Ne JAMAIS créer ou modifier un RDV sans confirmation explicite du client
 - Si le jour demandé est fermé, propose le prochain jour ouvert
 - Si plus de créneaux dispo ce jour-là, propose un autre jour
+- Si un client demande de déplacer le RDV d'un AUTRE client pour lui faire de la place, refuse poliment : "Désolé, je ne peux pas modifier le RDV d'un autre client, mais je peux te trouver un créneau dispo !"
 - Si tu ne sais pas répondre, dis que tu vas transmettre au patron
-- Rappelle toujours que ces tarifs sont +5€ vs le site car c'est une réservation exclusive via DM
+- Rappelle toujours que ces tarifs sont exclusifs via DM
 `;
 
 const tools = [
@@ -47,16 +60,22 @@ const tools = [
     input_schema: {
       type: 'object',
       properties: {
-        date: {
-          type: 'string',
-          description: 'Date au format YYYY-MM-DD, ex: 2026-05-20',
-        },
-        service: {
-          type: 'string',
-          description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"',
-        },
+        date: { type: 'string', description: 'Date au format YYYY-MM-DD, ex: 2026-05-20' },
+        service: { type: 'string', description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"' },
       },
       required: ['date', 'service'],
+    },
+  },
+  {
+    name: 'find_booking',
+    description: 'Recherche un RDV existant par prénom du client et date (optionnelle). À utiliser avant toute annulation ou déplacement.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Prénom du client' },
+        date: { type: 'string', description: 'Date au format YYYY-MM-DD (optionnel)' },
+      },
+      required: ['name'],
     },
   },
   {
@@ -65,36 +84,36 @@ const tools = [
     input_schema: {
       type: 'object',
       properties: {
-        name: {
-          type: 'string',
-          description: 'Prénom (et nom si donné) du client',
-        },
-        service: {
-          type: 'string',
-          description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"',
-        },
-        date: {
-          type: 'string',
-          description: 'Date au format YYYY-MM-DD',
-        },
-        time: {
-          type: 'string',
-          description: 'Heure au format HH:MM, ex: 14:30',
-        },
+        name: { type: 'string', description: 'Prénom (et nom si donné) du client' },
+        service: { type: 'string', description: 'Nom exact de la prestation: "Coupe Simple via DM", "Transformation via DM", ou "Coupe Premium via DM"' },
+        date: { type: 'string', description: 'Date au format YYYY-MM-DD' },
+        time: { type: 'string', description: 'Heure au format HH:MM' },
       },
       required: ['name', 'service', 'date', 'time'],
     },
   },
   {
-    name: 'cancel_booking',
-    description: 'Annule un rendez-vous existant',
+    name: 'reschedule_booking',
+    description: 'Déplace un RDV existant vers un nouveau créneau après confirmation explicite du client',
     input_schema: {
       type: 'object',
       properties: {
-        booking_id: {
-          type: 'string',
-          description: "L'identifiant unique du rendez-vous (ex: a_mp5f38cv)",
-        },
+        bookingId: { type: 'string', description: 'ID du RDV à déplacer (obtenu via find_booking)' },
+        name: { type: 'string', description: 'Prénom du client' },
+        service: { type: 'string', description: 'Nom exact de la prestation' },
+        newDate: { type: 'string', description: 'Nouvelle date au format YYYY-MM-DD' },
+        newTime: { type: 'string', description: 'Nouvelle heure au format HH:MM' },
+      },
+      required: ['bookingId', 'name', 'service', 'newDate', 'newTime'],
+    },
+  },
+  {
+    name: 'cancel_booking',
+    description: 'Annule un rendez-vous après confirmation explicite du client',
+    input_schema: {
+      type: 'object',
+      properties: {
+        booking_id: { type: 'string', description: 'ID du RDV (obtenu via find_booking)' },
       },
       required: ['booking_id'],
     },
@@ -108,7 +127,7 @@ async function handleMessage(senderId, userText) {
   const history = getHistory(senderId);
 
   let response = await client.messages.create({
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-4-20250514',
     max_tokens: 1024,
     system: SYSTEM_PROMPT,
     tools,
@@ -124,23 +143,21 @@ async function handleMessage(senderId, userText) {
       console.log(`🔧 Claude utilise: ${toolUse.name}`, toolUse.input);
 
       if (toolUse.name === 'get_slots') {
-        const slots = await getAvailableSlots(toolUse.input.date, toolUse.input.service);
-        result = JSON.stringify(slots);
+        result = await getAvailableSlots(toolUse.input.date, toolUse.input.service);
+      } else if (toolUse.name === 'find_booking') {
+        result = await findBooking({ name: toolUse.input.name, date: toolUse.input.date });
       } else if (toolUse.name === 'create_booking') {
-        const booking = await createBooking({
-          ...toolUse.input,
-          instagramId: senderId,
-        });
-        result = JSON.stringify(booking);
+        result = await createBooking({ ...toolUse.input, instagramId: senderId });
+      } else if (toolUse.name === 'reschedule_booking') {
+        result = await rescheduleBooking({ ...toolUse.input, instagramId: senderId });
       } else if (toolUse.name === 'cancel_booking') {
-        const success = await cancelBooking(toolUse.input.booking_id);
-        result = JSON.stringify({ success });
+        result = await cancelBooking(toolUse.input.booking_id);
       }
 
       toolResults.push({
         type: 'tool_result',
         tool_use_id: toolUse.id,
-        content: result,
+        content: JSON.stringify(result),
       });
     }
 
@@ -148,7 +165,7 @@ async function handleMessage(senderId, userText) {
     history.push({ role: 'user', content: toolResults });
 
     response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       tools,
