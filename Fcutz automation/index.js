@@ -50,5 +50,11 @@ app.post('/webhook/instagram', async (req, res) => {
 // Route de santé pour Railway
 app.get('/health', (req, res) => res.json({ status: 'ok', bot: 'BarberBot' }));
 
+// 🔥 ICI TU COLLES LE TEST WEBHOOK
+app.post('/test-webhook', (req, res) => {
+  console.log("🔥 TEST WEBHOOK REÇU");
+  console.log(req.body);
+
+  res.sendStatus(200);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 BarberBot lancé sur le port ${PORT}`));
