@@ -34,19 +34,50 @@ app.post("/webhook/instagram", async (req, res) => {
       console.log("📦 OBJECT:", body.object);
       for (const entry of body.entry || []) {
         console.log("📥 ENTRY:", JSON.stringify(entry, null, 2));
+
+        // ========================
+        // CAS 1 — DM classique
+        // ========================
         for (const event of entry.messaging || []) {
           console.log("📨 EVENT:", JSON.stringify(event, null, 2));
           if (event.sender && !event.message?.is_echo) {
             const senderId = event.sender.id;
             const text = event.message?.text || null;
 
-            // Vocalou attachement sans texte
             if (!text) {
               await sendMessage(senderId, "salut, je peux pas écouter les vocaux, tu peux m'écrire ?");
               continue;
             }
 
             console.log("📩 MESSAGE RECEIVED");
+            console.log("senderId:", senderId);
+            console.log("text:", text);
+            console.log("➡️ CALLING AI");
+            await handleMessage(senderId, text);
+          }
+        }
+
+        // ========================
+        // CAS 2 — Réponse à une story
+        // ========================
+        for (const change of entry.changes || []) {
+          console.log("🔄 CHANGE:", JSON.stringify(change, null, 2));
+          if (
+            change.field === "messages" &&
+            change.value?.message &&
+            !change.value?.message?.is_echo
+          ) {
+            const senderId = change.value.sender?.id;
+            const text = change.value.message?.text || null;
+
+            if (!senderId) continue;
+
+            if (!text) {
+              await sendMessage(senderId, "salut, je peux pas écouter les vocaux, tu peux m'écrire ?");
+              continue;
+            }
+
+            console.log("📩 STORY REPLY RECEIVED");
             console.log("senderId:", senderId);
             console.log("text:", text);
             console.log("➡️ CALLING AI");
