@@ -6,7 +6,7 @@
 const salons = {
 
   // ---- FCUTZ (ton salon) ----
-  "INSTAGRAM_ID_FCUTZ": {
+  "1029874416885169": {
     name: "FCUTZ",
     metaAccessToken: process.env.META_ACCESS_TOKEN_FCUTZ,
     bookingApiUrl: process.env.BOOKING_API_URL_FCUTZ,
