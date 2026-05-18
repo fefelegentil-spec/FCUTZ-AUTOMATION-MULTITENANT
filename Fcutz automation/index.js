@@ -1,69 +1,81 @@
-require("dotenv").config();
-const express = require("express");
+// ================================================
+// index.js — Multi-tenant
+// Identifie le salon via l'Instagram Page ID
+// reçu dans le webhook Meta
+// ================================================
+
+require('dotenv').config();
+const express = require('express');
 const app = express();
 app.use(express.json());
-const { handleMessage } = require("./agent");
-const { sendMessage } = require("./instagram");
+
+const { handleMessage } = require('./agent');
+const { sendMessage } = require('./instagram');
+const { getSalonByPageId } = require('./salons');
 
 // ========================
 // 🔐 WEBHOOK VERIFY META
 // ========================
-app.get("/webhook/instagram", (req, res) => {
-  console.log("🔐 VERIFY WEBHOOK HIT");
-  console.log("QUERY:", req.query);
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-  if (mode === "subscribe" && challenge) {
-    console.log("✅ VERIFY OK - returning challenge");
+app.get('/webhook/instagram', (req, res) => {
+  console.log('🔐 VERIFY WEBHOOK HIT');
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && challenge) {
+    // Vérifie le token pour la sécurité
+    if (token !== process.env.VERIFY_TOKEN) {
+      console.log('❌ VERIFY TOKEN INVALIDE');
+      return res.sendStatus(403);
+    }
+    console.log('✅ VERIFY OK');
     return res.status(200).send(challenge);
   }
-  console.log("❌ VERIFY FAILED");
   return res.sendStatus(400);
 });
 
 // ========================
 // 📩 INSTAGRAM WEBHOOK
 // ========================
-app.post("/webhook/instagram", async (req, res) => {
-  console.log("🚨 WEBHOOK HIT RAW");
-  console.log(JSON.stringify(req.body, null, 2));
+app.post('/webhook/instagram', async (req, res) => {
+  console.log('🚨 WEBHOOK HIT');
   try {
     const body = req.body;
-    if (body.object) {
-      console.log("📦 OBJECT:", body.object);
-      for (const entry of body.entry || []) {
-        console.log("📥 ENTRY:", JSON.stringify(entry, null, 2));
 
-        // ========================
-        // CAS 1 — DM classique
-        // ========================
+    if (body.object) {
+      for (const entry of body.entry || []) {
+
+        // ── Récupère l'ID de la page Instagram (= identifiant du salon) ──
+        const pageId = entry.id;
+        const salon = getSalonByPageId(pageId);
+
+        if (!salon) {
+          console.warn(`⚠️ Aucun salon configuré pour pageId: ${pageId} — message ignoré`);
+          continue;
+        }
+
+        console.log(`🏪 Salon identifié: ${salon.name}`);
+
+        // ── CAS 1 — DM classique ──
         for (const event of entry.messaging || []) {
-          console.log("📨 EVENT:", JSON.stringify(event, null, 2));
           if (event.sender && !event.message?.is_echo) {
             const senderId = event.sender.id;
             const text = event.message?.text || null;
 
             if (!text) {
-              await sendMessage(senderId, "salut, je peux pas écouter les vocaux, tu peux m'écrire ?");
+              await sendMessage(senderId, "je peux pas écouter les vocaux, tu peux m'écrire ?", salon.metaAccessToken);
               continue;
             }
 
-            console.log("📩 MESSAGE RECEIVED");
-            console.log("senderId:", senderId);
-            console.log("text:", text);
-            console.log("➡️ CALLING AI");
-            await handleMessage(senderId, text);
+            console.log(`📩 [${salon.name}] DM de ${senderId}: ${text}`);
+            await handleMessage(senderId, text, salon);
           }
         }
 
-        // ========================
-        // CAS 2 — Réponse à une story
-        // ========================
+        // ── CAS 2 — Réponse à une story ──
         for (const change of entry.changes || []) {
-          console.log("🔄 CHANGE:", JSON.stringify(change, null, 2));
           if (
-            change.field === "messages" &&
+            change.field === 'messages' &&
             change.value?.message &&
             !change.value?.message?.is_echo
           ) {
@@ -73,21 +85,18 @@ app.post("/webhook/instagram", async (req, res) => {
             if (!senderId) continue;
 
             if (!text) {
-              await sendMessage(senderId, "salut, je peux pas écouter les vocaux, tu peux m'écrire ?");
+              await sendMessage(senderId, "je peux pas écouter les vocaux, tu peux m'écrire ?", salon.metaAccessToken);
               continue;
             }
 
-            console.log("📩 STORY REPLY RECEIVED");
-            console.log("senderId:", senderId);
-            console.log("text:", text);
-            console.log("➡️ CALLING AI");
-            await handleMessage(senderId, text);
+            console.log(`📩 [${salon.name}] Story reply de ${senderId}: ${text}`);
+            await handleMessage(senderId, text, salon);
           }
         }
       }
     }
   } catch (err) {
-    console.error("❌ WEBHOOK ERROR:", err);
+    console.error('❌ WEBHOOK ERROR:', err);
   }
   res.sendStatus(200);
 });
@@ -95,16 +104,20 @@ app.post("/webhook/instagram", async (req, res) => {
 // ========================
 // 🧪 TEST ENDPOINT
 // ========================
-app.post("/test-webhook", async (req, res) => {
-  console.log("🧪 TEST WEBHOOK");
-  console.log(req.body);
+app.post('/test-webhook', async (req, res) => {
+  console.log('🧪 TEST WEBHOOK');
   try {
-    const senderId = req.body.senderId || "test-user";
-    const text = req.body.message || "test";
-    await handleMessage(senderId, text);
+    const senderId = req.body.senderId || 'test-user';
+    const text = req.body.message || 'test';
+    const salonId = req.body.salonId; // passe le salonId dans le body pour tester
+
+    const salon = getSalonByPageId(salonId);
+    if (!salon) return res.status(400).json({ error: `Salon non trouvé pour salonId: ${salonId}` });
+
+    await handleMessage(senderId, text, salon);
     res.sendStatus(200);
   } catch (err) {
-    console.error("❌ TEST ERROR:", err);
+    console.error('❌ TEST ERROR:', err);
     res.sendStatus(500);
   }
 });
@@ -112,9 +125,8 @@ app.post("/test-webhook", async (req, res) => {
 // ========================
 // ❤️ HEALTH CHECK
 // ========================
-app.get("/health", (req, res) => {
-  console.log("❤️ HEALTH CHECK HIT");
-  res.json({ status: "ok", bot: "FCUTZ" });
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', bot: 'FCUTZ Multi-tenant' });
 });
 
 // ========================
@@ -122,5 +134,5 @@ app.get("/health", (req, res) => {
 // ========================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
+  console.log('🚀 Server running on port', PORT);
 });

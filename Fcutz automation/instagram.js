@@ -1,27 +1,27 @@
-const axios = require("axios");
+// ================================================
+// instagram.js — Multi-tenant
+// Le token est passé dynamiquement selon le salon
+// ================================================
 
-// Envoi via Meta Page Messaging API (stable)
-async function sendMessage(recipientId, text) {
+const axios = require('axios');
+
+async function sendMessage(recipientId, text, accessToken) {
   try {
     const response = await axios.post(
-      "https://graph.facebook.com/v19.0/me/messages",
+      'https://graph.facebook.com/v19.0/me/messages',
       {
         recipient: { id: recipientId },
         message: { text },
       },
       {
         params: {
-          access_token: process.env.META_ACCESS_TOKEN,
+          access_token: accessToken, // ← token dynamique selon le salon
         },
       }
     );
-
-    console.log("📤 MESSAGE ENVOYÉ:", response.data);
+    console.log('📤 MESSAGE ENVOYÉ:', response.data);
   } catch (err) {
-    console.error(
-      "❌ Erreur envoi message:",
-      err.response?.data || err.message
-    );
+    console.error('❌ Erreur envoi message:', err.response?.data || err.message);
   }
 }
 

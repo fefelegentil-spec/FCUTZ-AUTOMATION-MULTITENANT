@@ -1,11 +1,9 @@
-const axios = require('axios');
-const BASE = process.env.BOOKING_API_URL;
+// ================================================
+// booking.js — Multi-tenant
+// bookingApiUrl et services passés en paramètre
+// ================================================
 
-const SERVICES_VIA_DM = {
-  'Coupe Simple via DM': { duration: 30, price: 20 },
-  'Transformation via DM': { duration: 45, price: 25 },
-  'Coupe Premium via DM': { duration: 45, price: 25 },
-};
+const axios = require('axios');
 
 const DAY_MAP = { 0:'dim', 1:'lun', 2:'mar', 3:'mer', 4:'jeu', 5:'ven', 6:'sam' };
 
@@ -20,13 +18,13 @@ function minutesToTime(minutes) {
   return `${h}:${m}`;
 }
 
-async function getAvailableSlots(date, service) {
+async function getAvailableSlots(date, service, bookingApiUrl, services) {
   try {
-    const serviceInfo = SERVICES_VIA_DM[service];
+    const serviceInfo = services[service];
     if (!serviceInfo) return { error: `Prestation inconnue: ${service}` };
     const duration = serviceInfo.duration;
 
-    const availRes = await axios.get(`${BASE}/availability`);
+    const availRes = await axios.get(`${bookingApiUrl}/availability`);
     const hours = availRes.data.hours;
     const closedDates = availRes.data.closedDates || [];
 
@@ -41,7 +39,7 @@ async function getAvailableSlots(date, service) {
     const openMinutes = timeToMinutes(dayHours.start);
     const closeMinutes = timeToMinutes(dayHours.end);
 
-    const apptRes = await axios.get(`${BASE}/appointments`);
+    const apptRes = await axios.get(`${bookingApiUrl}/appointments`);
     const allAppointments = apptRes.data || [];
     const dayAppointments = allAppointments.filter(a => a.date === date && a.status !== 'cancelled');
 
@@ -64,9 +62,9 @@ async function getAvailableSlots(date, service) {
   }
 }
 
-async function findBooking({ name, date }) {
+async function findBooking({ name, date }, bookingApiUrl) {
   try {
-    const apptRes = await axios.get(`${BASE}/appointments`);
+    const apptRes = await axios.get(`${bookingApiUrl}/appointments`);
     const all = apptRes.data || [];
     const firstNameLower = name.trim().split(' ')[0].toLowerCase();
     const matches = all.filter(a => {
@@ -89,14 +87,14 @@ async function findBooking({ name, date }) {
   }
 }
 
-async function createBooking({ name, service, date, time, instagramId }) {
+async function createBooking({ name, service, date, time, instagramId }, bookingApiUrl, services) {
   try {
-    const serviceInfo = SERVICES_VIA_DM[service];
+    const serviceInfo = services[service];
     if (!serviceInfo) return { error: `Prestation inconnue: ${service}` };
     const parts = name.trim().split(' ');
     const fname = parts[0];
     const lname = parts.slice(1).join(' ') || '';
-    const response = await axios.post(`${BASE}/book`, {
+    const response = await axios.post(`${bookingApiUrl}/book`, {
       fname, lname,
       phone: '', email: '',
       note: `Réservation via Instagram DM (@${instagramId})`,
@@ -112,10 +110,10 @@ async function createBooking({ name, service, date, time, instagramId }) {
   }
 }
 
-async function rescheduleBooking({ bookingId, name, service, newDate, newTime, instagramId }) {
+async function rescheduleBooking({ bookingId, name, service, newDate, newTime, instagramId }, bookingApiUrl, services) {
   try {
-    await axios.delete(`${BASE}/appointments/${bookingId}`);
-    const newBooking = await createBooking({ name, service, date: newDate, time: newTime, instagramId });
+    await axios.delete(`${bookingApiUrl}/appointments/${bookingId}`);
+    const newBooking = await createBooking({ name, service, date: newDate, time: newTime, instagramId }, bookingApiUrl, services);
     return { success: true, newBooking };
   } catch (err) {
     console.error('❌ Erreur déplacement RDV:', err.message);
@@ -123,9 +121,9 @@ async function rescheduleBooking({ bookingId, name, service, newDate, newTime, i
   }
 }
 
-async function cancelBooking(bookingId) {
+async function cancelBooking(bookingId, bookingApiUrl) {
   try {
-    await axios.delete(`${BASE}/appointments/${bookingId}`);
+    await axios.delete(`${bookingApiUrl}/appointments/${bookingId}`);
     return true;
   } catch (err) {
     console.error('❌ Erreur annulation:', err.message);
@@ -133,4 +131,4 @@ async function cancelBooking(bookingId) {
   }
 }
 
-module.exports = { getAvailableSlots, findBooking, createBooking, rescheduleBooking, cancelBooking, SERVICES_VIA_DM };
+module.exports = { getAvailableSlots, findBooking, createBooking, rescheduleBooking, cancelBooking };
