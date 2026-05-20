@@ -9,6 +9,7 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+const Anthropic = require('@anthropic-ai/sdk');
 const { handleMessage } = require('./agent');
 const { sendMessage } = require('./instagram');
 const { getSalonByPageId } = require('./salons');
@@ -23,7 +24,6 @@ app.get('/webhook/instagram', (req, res) => {
   const challenge = req.query['hub.challenge'];
 
   if (mode === 'subscribe' && challenge) {
-    // Vérifie le token pour la sécurité
     if (token !== process.env.VERIFY_TOKEN) {
       console.log('❌ VERIFY TOKEN INVALIDE');
       return res.sendStatus(403);
@@ -38,14 +38,13 @@ app.get('/webhook/instagram', (req, res) => {
 // 📩 INSTAGRAM WEBHOOK
 // ========================
 app.post('/webhook/instagram', async (req, res) => {
-  console.log('🚨 WEBHOOK HIT');
+  console.log('🚨 WEBHOOL HIT');
   try {
     const body = req.body;
 
     if (body.object) {
       for (const entry of body.entry || []) {
 
-        // ── Récupère l'ID de la page Instagram (= identifiant du salon) ──
         const pageId = entry.id;
         const salon = getSalonByPageId(pageId);
 
@@ -56,7 +55,6 @@ app.post('/webhook/instagram', async (req, res) => {
 
         console.log(`🏪 Salon identifié: ${salon.name}`);
 
-        // ── CAS 1 — DM classique ──
         for (const event of entry.messaging || []) {
           if (event.sender && !event.message?.is_echo) {
             const senderId = event.sender.id;
@@ -72,7 +70,6 @@ app.post('/webhook/instagram', async (req, res) => {
           }
         }
 
-        // ── CAS 2 — Réponse à une story ──
         for (const change of entry.changes || []) {
           if (
             change.field === 'messages' &&
@@ -102,6 +99,36 @@ app.post('/webhook/instagram', async (req, res) => {
 });
 
 // ========================
+// 🤖 BOT DEMO CHAT (TrimSync landing)
+// Proxy sécurisé vers Claude — clé côté serveur
+// ========================
+app.post('/api/chat', async (req, res) => {
+  const { system, messages } = req.body;
+  if (!system || !Array.isArray(messages)) {
+    return res.status(400).json({ ok: false, error: 'Champs system et messages requis.' });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ ok: false, error: 'API non configurée.' });
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 300,
+      system,
+      messages: messages.slice(-10),
+    });
+
+    const text = response.content?.find(b => b.type === 'text')?.text;
+    res.json({ ok: true, text });
+  } catch (err) {
+    console.error('[/api/chat] Erreur:', err);
+    res.status(500).json({ ok: false, error: 'Erreur serveur.' });
+  }
+});
+
+// ========================
 // 🧪 TEST ENDPOINT
 // ========================
 app.post('/test-webhook', async (req, res) => {
@@ -109,7 +136,7 @@ app.post('/test-webhook', async (req, res) => {
   try {
     const senderId = req.body.senderId || 'test-user';
     const text = req.body.message || 'test';
-    const salonId = req.body.salonId; // passe le salonId dans le body pour tester
+    const salonId = req.body.salonId;
 
     const salon = getSalonByPageId(salonId);
     if (!salon) return res.status(400).json({ error: `Salon non trouvé pour salonId: ${salonId}` });
